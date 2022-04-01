@@ -148,12 +148,13 @@ function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Va
     @rput X y
     R"Xy <- cbind(X, y)"
     R"""ranger::ranger(
-            y ~ .,
             data = Xy,
+            dependent.variable.name = "y",
             num.trees = $(config.ntrees),
             mtry = $(calc_mtry[config.mtry](size(X, 2))),
-            max.depth = $(if !isnothing(config.maxdepth) config.maxdepth else R"NULL" end),
+            max.depth = $(something(config.maxdepth, 0)),
             probability = TRUE,
+            replace = TRUE,
             classification = TRUE)$predictions[,2]
     """ |> rcopy
 end
