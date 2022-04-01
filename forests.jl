@@ -22,9 +22,9 @@ Base.iterate(fc::ForestConfig{Vector{Int}}, index::Int) =
     end
 
 const calc_mtry =
-    Dict(:sqrt => n -> round(Int, sqrt(n)),
-         :log2 => n -> round(Int, log2(n)),
-         :third => n -> round(Int, n/3),
+    Dict(:sqrt => n -> floor(Int, sqrt(n)),
+         :log2 => n -> floor(Int, log2(n)),
+         :third => n -> floor(Int, n/3),
          :all => n -> n)
 
 const forest_backends = Symbol[]
