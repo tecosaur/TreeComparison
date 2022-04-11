@@ -2,29 +2,37 @@ include("genreport.jl")
 
 using RDatasets
 
-generate_report("Edgar Anderson's Iris Data",
-                dataset("datasets", "iris"), :Species)
+cases = [
+    ("Iris", "Edgar Anderson's Iris Data",
+     dataset("datasets", "iris"), :Species),
+    ("CO2", "Carbon Dioxide Uptake in Grass Plants",
+     select(dataset("datasets", "CO2"), :Type, :Conc, :Uptake), :Type),
+    ("Orchard", "Potency of Orchard Sprays",
+     dataset("datasets", "OrchardSprays"), :Treatment),
+    ("EnzRVol", "Reaction Velocity of an Enzymatic Reaction",
+     dataset("datasets", "Puromycin"), :State),
+    ("Tooth", "The Effect of Vitamin C on Tooth Growth in Guinea Pigs",
+     dataset("datasets", "ToothGrowth"), :Supp),
+    ("Synth.TE", "MASS synthentic classification problem TE",
+     dataset("MASS", "synth.te"), :YC),
+    ("Synth.TR", "MASS synthentic classification problem TR",
+     dataset("MASS", "synth.tr"), :YC),
+    ("Melanoma", "Survival from Malignant Melanoma",
+     dataset("MASS", "Melanoma"), :Status),
+    ("Pima", "Diabetes in Pima Indian Women",
+     dataset("MASS", "Pima.te"), :Type)
+]
 
-generate_report("Carbon Dioxide Uptake in Grass Plants",
-                select(dataset("datasets", "CO2"), :Type, :Conc, :Uptake), :Type)
+overall_results =
+    DataFrame(map(cases) do (nameshort, name, data, defvar)
+                  consistency_scores, scalar_scores = generate_report(name, data, defvar)
+                  merge((;data=nameshort), NamedTuple(consistency_scores[end, :]))
+              end)
+select!(overall_results, Not(:ntrees))
 
-generate_report("Potency of Orchard Sprays",
-                dataset("datasets", "OrchardSprays"), :Treatment)
+overall_summary =
+    plot(stack(overall_results, Not(:data),
+               variable_name=:metric, value_name=:consistency),
+         x=:data, y=:consistency, color=:metric, Geom.line)
 
-generate_report("Reaction Velocity of an Enzymatic Reaction",
-                dataset("datasets", "Puromycin"), :State)
-
-generate_report("The Effect of Vitamin C on Tooth Growth in Guinea Pigs",
-                dataset("datasets", "ToothGrowth"), :Supp)
-
-generate_report("MASS synthentic classification problem TE",
-                dataset("MASS", "synth.te"), :YC)
-
-generate_report("MASS synthentic classification problem TR",
-                dataset("MASS", "synth.tr"), :YC)
-
-generate_report("Survival from Malignant Melanoma",
-                dataset("MASS", "Melanoma"), :Status)
-
-generate_report("Diabetes in Pima Indian Women",
-                dataset("MASS", "Pima.te"), :Type)
+draw(SVG(joinpath(REPORT_DIR, "consistency.svg")), overall_summary)
