@@ -24,8 +24,8 @@ cases = [
 ]
 
 overall_results =
-    DataFrame(map(cases) do (nameshort, name, data, defvar)
-                  consistency_scores, scalar_scores = generate_report(name, data, defvar)
+    DataFrame(map(cases) do (nameshort, name, data, depvar)
+                  consistency_scores, scalar_scores = generate_report(name, data, depvar)
                   merge((;data=nameshort), NamedTuple(consistency_scores[end, :]))
               end)
 select!(overall_results, Not(:ntrees))
