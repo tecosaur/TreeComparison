@@ -31,6 +31,25 @@ function metric_roc!(res::ForestResults)
     end
 end
 
+function metric_error_rate!(res::ForestResults)
+    function ϵmin(actual, predicted, tol=1e-6)
+        left, right = 0.0, 1.0
+        while right - left > tol
+            thresholds = range(left, right, length=20)
+            scores = mean.(actual .== (predicted .> t) for t in thresholds)
+            tbest = argmax(scores)
+            left = thresholds[max(1, tbest - 1)]
+            right = thresholds[min(length(thresholds), tbest + 1)]
+        end
+        mean(actual .!= (predicted .> (left+right)/2))
+    end
+    for backend in keys(res.predicted)
+        for i in 1:length(res.predicted[backend])
+            res.metrics[backend][i][:error] = ϵmin(res.actual, res.predicted[backend][i][:vals])
+        end
+    end
+end
+
 # ---------------------
 # Plotting
 # ---------------------

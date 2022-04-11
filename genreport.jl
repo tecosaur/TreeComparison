@@ -38,9 +38,9 @@ function generate_report(name::String, data::DataFrame, depvar::Symbol,
                        join(string.(config.ntrees), ", ", ", and "),
                        " trees are used, checking ",
                        Dict(:all => "all $(size(data, 2))",
-                            :sqrt => "\\(\\lfloor \\sqrt{$(size(data, 2))} \\rfloor = $(FC_mtry[config.mtry](size(data, 2)))\\)",
-                            :log2 => "\\(\\lfloor \\log_2 $(size(data, 2)) \\rfloor = $(FC_mtry[config.mtry](size(data, 2)))\\)",
-                            :third => "\\(\\lfloor $(size(data, 2))/3 \\rfloor = $(FC_mtry[config.mtry](size(data, 2)))\\)",
+                            :sqrt => "\\(\\lfloor \\sqrt{$(size(data, 2))} \\rfloor = $(calc_mtry[config.mtry](size(data, 2)))\\)",
+                            :log2 => "\\(\\lfloor \\log_2 $(size(data, 2)) \\rfloor = $(calc_mtry[config.mtry](size(data, 2)))\\)",
+                            :third => "\\(\\lfloor $(size(data, 2))/3 \\rfloor = $(calc_mtry[config.mtry](size(data, 2)))\\)",
                             )[config.mtry],
                        " variables each split, ",
                        "and the out-of-bag class probabilities analysed.")),
@@ -51,7 +51,8 @@ function generate_report(name::String, data::DataFrame, depvar::Symbol,
     push!(report, Org.Keyword("latex" => "\\newpage"))
     # Note spot for the overall summary
     overallsummarypos = length(report.content)
-    scalar_metrics = [("auPRC", :auPRC), ("auROC", :auROC), ("maximum F1 score", :f1max)]
+    scalar_metrics = [("auPRC", :auPRC), ("auROC", :auROC),
+                      ("maximum F1 score", :f1max), ("OOB error rate", :error)]
     scalar_metric_results = DataFrame(ntrees=Int[], backend=Symbol[] ;NamedTuple(zip(last.(scalar_metrics), fill(Float64[], length(scalar_metrics))))...)
     consistency_scores = DataFrame(ntrees=Int[], ;NamedTuple(zip(last.(scalar_metrics), fill(Float64[], length(scalar_metrics))))...)
     # Per-ntree results
@@ -63,6 +64,7 @@ function generate_report(name::String, data::DataFrame, depvar::Symbol,
         results = forest_preds(data, depvar, fconfig, backends)
         metric_precrec!(results)
         metric_roc!(results)
+        metric_error_rate!(results)
         for backend in keys(results.metrics) |> collect |> sort
             for i in 1:length(results.metrics[backend])
                 push!(scalar_metric_results,
@@ -149,18 +151,79 @@ function generate_report(name::String, data::DataFrame, depvar::Symbol,
             org"Consistency is calculated as one take the normalised standard deviation
                 --- i.e. \(1-\sqrt{2} \cdot \sigma(x / \max(x))\)."p)
 
+    scalar_metric_results_summary =
+        combine(groupby(scalar_metric_results, [:ntrees, :backend]),
+                [metric => func => "$(metric)_$(label)"
+                 for metric in last.(scalar_metrics)
+                     for (label, func) in
+                         (("min", minimum),
+                          ("max", maximum),
+                          ("q1", x -> quantile(x, 0.25)),
+                          ("q2", median),
+                          ("q3", x -> quantile(x, 0.75)))])
+
+    summary_plots =
+        map(setdiff(last.(scalar_metrics), (:error,))) do metric
+            plot(layer(scalar_metric_results,
+                       x=:ntrees, y=metric, color=:backend,
+                       group=:backend, Geom.point, size=[2pt],
+                       Theme(alphas=[0.4], discrete_highlight_color=c->nothing)),
+                 layer(scalar_metric_results_summary,
+                       x=:ntrees, y=Symbol("$(metric)_q2"),
+                       color=:backend, Geom.line),
+                 layer(scalar_metric_results_summary,
+                       x=:ntrees, color=:backend,
+                       ymin=Symbol("$(metric)_min"),
+                       ymax=Symbol("$(metric)_max"),
+                       Geom.ribbon, alpha=[0.4]),
+                 layer(scalar_metric_results_summary,
+                       x=:ntrees, color=:backend,
+                       ymin=Symbol("$(metric)_q1"),
+                       ymax=Symbol("$(metric)_q3"),
+                       Geom.ribbon, alpha=[0.7]),
+                 Coord.cartesian(ymin=0, ymax=1))
+        end
+
     insert!(report.content, (overallsummarypos+=1),
-            PlotGrid(map(last.(scalar_metrics)) do metric
-                         Plotter(plot(scalar_metric_results,
-                                      x=:ntrees, y=metric, color=:backend,
-                                      group=:backend, Geom.point, size=[5pt],
-                                      Geom.smooth,
-                                      Theme(alphas=[0.3], discrete_highlight_color=c->nothing),
-                                      Coord.cartesian(ymin=0, ymax=1)))
-                     end))
+            PlotGrid([Plotter(p) for p in summary_plots],
+                     floor(Int, length(summary_plots)/2)))
+
+    insert!(report.content, (overallsummarypos+=1),
+            org"We'd also like to see the OOB error rate."p)
+
+    insert!(report.content, (overallsummarypos+=1),
+            Plotter(plot(layer(scalar_metric_results,
+                               x=:ntrees, y=:error, color=:backend,
+                               group=:backend, Geom.beeswarm,
+                               Theme(alphas=[0.7], point_size=1pt,
+                                     discrete_highlight_color=c->nothing)),
+                         layer(scalar_metric_results_summary,
+                               x=:ntrees, y=:error_q2,
+                               color=:backend, Geom.line,
+                               Theme(line_width=1.5pt)),
+                         # layer(scalar_metric_results_summary,
+                         #       x=:ntrees, y=:error_min,
+                         #       color=:backend, Geom.line,
+                         #       Theme(line_width=0.2pt, line_style=[:dot],
+                         #             default_color=RGBA(0,0,0,0.1))),
+                         # layer(scalar_metric_results_summary,
+                         #       x=:ntrees, y=:error_max,
+                         #       color=:backend, Geom.line,
+                         #       Theme(line_width=0.2pt, line_style=[:dot],
+                         #             default_color=RGBA(0,0,0,0.1))),
+                         layer(scalar_metric_results_summary,
+                               x=:ntrees, color=:backend,
+                               ymin=:error_q1, ymax=:error_q3,
+                               Geom.ribbon, alpha=[0.7]),
+                         layer(scalar_metric_results_summary,
+                               x=:ntrees, color=:backend,
+                               ymin=:error_min, ymax=:error_max,
+                               Geom.ribbon, alpha=[0.3]))))
+
     # Finish up
     printstyled("Saving report\n", color=:blue)
     write(report, :pdf)
     write(report, :html)
     printstyled("Finished in ", round(Int, time() - start), "s\n", color=:blue)
+    consistency_scores, scalar_metric_results
 end

@@ -34,17 +34,30 @@ end
 
 struct PlotGrid
     plots::Vector{Plotter}
+    nrow::Integer
 end
 
+PlotGrid(plots::Vector{Plotter}) = PlotGrid(plots, 1)
+
 function Base.convert(::Type{Org.Component}, pg::PlotGrid)
-    fracwidth = round(0.98 / length(pg.plots), digits=3)
-    Org.SpecialBlock(
-        "center",
-        map(pg.plots) do wp
-            Org.AffiliatedKeywordsWrapper(
-                convert(Org.Component, wp),
-                ["attr_latex" => ":width $fracwidth\\linewidth :center"])
-        end)
+    ncol = floor(length(pg.plots) / pg.nrow)
+    fracwidth = round(0.98 / ncol, digits=3)
+    plotblock(plots::Vector{Plotter}) =
+        Org.SpecialBlock(
+            "center",
+            map(plots) do p
+                Org.AffiliatedKeywordsWrapper(
+                    convert(Org.Component, p),
+                    ["attr_latex" => ":width $fracwidth\\linewidth :center"])
+            end)
+    if nrow == 1
+        plotblock(pg.plots)
+    else
+        Org.Drawer("plotgrid",
+                   [plotblock(pg.plots[UnitRange{Int64}(ps, min(length(pg.plots), ps+ncol))])
+                    for ps in
+                    1:ncol:length(pg.plots)-(ncol-1)])
+    end
 end
 
 mutable struct Report
