@@ -31,7 +31,7 @@ const forest_backends = Symbol[]
 
 struct ForestResults
     actual::Vector{Int}
-    predicted::Dict{Symbol, Vector{Vector{Float64}}}
+    predicted::Dict{Symbol, Vector{Dict{Symbol, Any}}}
     metrics::Dict{Symbol, Vector{Dict{Symbol, Any}}}
 end
 
@@ -74,7 +74,14 @@ function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Va
                   oob_score=true)
     forest = skrandomforrest(config.ntrees; skl_params...)
     forest.fit(X, y)
-    pyconvert(Matrix, forest.oob_decision_function_)[:, 2]
+    predvals = pyconvert(Matrix, forest.oob_decision_function_)[:, 2],
+    treedepths = pyconvert.(Int, [dt.tree_.max_depth for dt in forest.estimators_])
+    treesizes = pyconvert.(Int, [dt.tree_.node_count for dt in forest.estimators_])
+    gini_imp = pyconvert(Vector, forest.feature_importances_)
+    Dict(:vals => predvals,
+         :treedepths => treedepths,
+         :treesizes => treesizes,
+         :gini_imp => gini_imp)
 end
 
 push!(forest_backends, :sklearn)
@@ -99,9 +106,12 @@ function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Va
                      config.maxdepth
                  else pybuiltins.None end)
 
+    treedepths = Int[]
+    treesizes = Int[]
+    gini_imps = Matrix{Float64}(undef, size(X, 2), config.ntrees)
     predictions = zeros(Float64, size(X, 1))
     predictions_seen = zeros(Int, size(X, 1))
-    for _ in 1:config.ntrees
+    for i in 1:config.ntrees
         dtree = skdecisiontree(; skl_params...)
         train, test = bootstrapsample(axes(X, 1))
         dtree.fit(X[train, :], y[train])
@@ -109,12 +119,17 @@ function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Va
         if size(preds, 2) == 1
             predictions[test] .+= y[train[1]]
         else
-            predictions[test] .+= preds[:, 2]
+            predictions[test] += preds[:, 2]
         end
         predictions_seen[test] .+= 1
-        dtree
+        gini_imps[:, i] = pyconvert(Vector, dtree.feature_importances_)
+        push!(treedepths, pyconvert(Int, dtree.tree_.max_depth))
+        push!(treesizes, pyconvert(Int, dtree.tree_.node_count))
     end
-    predictions ./ predictions_seen
+    Dict(:vals => predictions ./ predictions_seen,
+         :treedepths => treedepths,
+         :treesizes => treesizes,
+         :gini_imp => mean(gini_imps, dims=2))
 end
 
 push!(forest_backends, :call_sklearn)
@@ -127,13 +142,15 @@ R"library(randomForest)"
 
 function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Val{:randomForest})
     @rput X y
-    R"""randomForest(
+    R"""rf <- randomForest(
             X, factor(y),
             ntree = $(config.ntrees),
             mtry = $(calc_mtry[config.mtry](size(X, 2))),
             maxnodes = $(if !isnothing(config.maxdepth) 1+config.maxdepth else R"NULL" end)
-        )$votes[,2]
-    """ |> rcopy
+        )"""
+    Dict(:vals => R"rf$votes[,2]" |> rcopy,
+         :treesizes => R"treesize(rf)" |> rcopy,
+         :gini_imp => R"rf$importance[,1]" |> rcopy)
 end
 
 push!(forest_backends, :randomForest)
@@ -147,7 +164,7 @@ R"library(ranger)"
 function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Val{:ranger})
     @rput X y
     R"Xy <- cbind(X, y)"
-    R"""ranger::ranger(
+    R"""rrf -> ranger::ranger(
             data = Xy,
             dependent.variable.name = "y",
             num.trees = $(config.ntrees),
@@ -157,6 +174,9 @@ function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Va
             replace = TRUE,
             classification = TRUE)$predictions[,2]
     """ |> rcopy
+    Dict(:vals => R"rrf$predictions[,2]" |> rcopy,
+         :treesizes => R"sapply(1:rrf$num.trees, function(n) {dim(treeInfo(rrf, tree=n))[1]})" |> rcopy,
+         :gini_imp => R"rrf$variable.importance" |> rcopy)
 end
 
 push!(forest_backends, :ranger)

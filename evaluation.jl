@@ -6,7 +6,7 @@ function metric_precrec!(res::ForestResults)
     for backend in keys(res.predicted)
         for i in 1:length(res.predicted[backend])
             precision, recall, precision_recall_thresholds =
-                pyconvert.(Vector, skmetrics.precision_recall_curve(res.actual, res.predicted[backend][i]))
+                pyconvert.(Vector, skmetrics.precision_recall_curve(res.actual, res.predicted[backend][i][:vals]))
             f1scores = replace((@. 2*recall*precision / (recall+precision)), NaN => 0.0)
             res.metrics[backend][i][:precision] = precision
             res.metrics[backend][i][:recall] = recall
@@ -22,7 +22,7 @@ function metric_roc!(res::ForestResults)
         for i in 1:length(res.predicted[backend])
             αs, πs, απ_thresholds =
                 pyconvert(Vector{Vector{Float64}},
-                          skmetrics.roc_curve(res.actual, res.predicted[backend][i]))
+                          skmetrics.roc_curve(res.actual, res.predicted[backend][i][:vals]))
             res.metrics[backend][i][:αs] = αs
             res.metrics[backend][i][:πs] = πs
             res.metrics[backend][i][:απ_thresholds] = απ_thresholds
