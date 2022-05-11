@@ -6,6 +6,8 @@ const FIGURE_DIR = "figures"
 
 if !isdir(REPORT_DIR)
     mkdir(REPORT_DIR)
+end
+if !isdir(joinpath(REPORT_DIR, FIGURE_DIR))
     mkdir(joinpath(REPORT_DIR, FIGURE_DIR))
 end
 
@@ -92,7 +94,9 @@ Base.convert(::Type{OrgDoc}, r::Report) =
         init=Union{Org.Heading, Org.Section}[
             Org.Section(Org.Element[Org.Keyword("title" => r.name),
                                     Org.Keyword("date" =>
-                                        string(Org.TimestampInactive(now()))[2:end-1])])]))
+                                        string(Org.TimestampInactive(now()))[2:end-1]),
+                                    Org.Keyword("latex_header", "\\usepackage[top=2.5cm,bottom=3cm]{geometry}"),
+                                    Org.Keyword("options", "coverpage:no")])]))
 
 exportcmd(path::String, exporter::String) =
     `emacs --batch --eval
