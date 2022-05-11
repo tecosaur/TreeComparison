@@ -96,6 +96,7 @@ Base.convert(::Type{OrgDoc}, r::Report) =
                                     Org.Keyword("date" =>
                                         string(Org.TimestampInactive(now()))[2:end-1]),
                                     Org.Keyword("latex_header", "\\usepackage[top=2.5cm,bottom=3cm]{geometry}"),
+                                    Org.Keyword("latex_header", "\\usepackage[inkscapelatex=false]{svg}"),
                                     Org.Keyword("options", "coverpage:no")])]))
 
 exportcmd(path::String, exporter::String) =
