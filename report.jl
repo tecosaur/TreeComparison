@@ -111,7 +111,11 @@ function Base.write(r::Report, type::Symbol=:org)
         write(orgfile, sprint(org, convert(OrgDoc, r)))
     end
     if type == :pdf
-        run(Cmd(exportcmd(orgfile, "org-latex-export-to-pdf"), dir=REPORT_DIR), wait=false)
+            if any(!isnothing, (Sys.which("latexmk"), Sys.which("pdflatex")))
+                run(Cmd(exportcmd(orgfile, "org-latex-export-to-pdf"), dir=REPORT_DIR), wait=false)
+            else
+                run(Cmd(exportcmd(orgfile, "org-latex-export-to-latex"), dir=REPORT_DIR), wait=false)
+            end
     elseif type == :html
         run(Cmd(exportcmd(orgfile, "org-html-export-to-html"), dir=REPORT_DIR), wait=false)
     elseif type == :rmorg && isfile(orgfile)
