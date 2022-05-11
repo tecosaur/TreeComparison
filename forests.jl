@@ -183,22 +183,56 @@ push!(forest_backends, :randomForest)
 
 R"library(ranger)"
 
+R"""
+rangertreegetmaxdepth <- function(treeinfo, row) {
+    if (is.na(row)) {
+        0
+    } else {
+        leftchild <- 1+treeinfo[row, "leftChild"]
+        rightchild <- 1+treeinfo[row, "rightChild"]
+        1 + max(rangertreegetmaxdepth(treeinfo, leftchild),
+                rangertreegetmaxdepth(treeinfo, rightchild))
+    }
+}
+"""
+
 function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Val{:ranger})
     @rput X y
-    R"Xy <- cbind(X, y)"
-    R"""rrf -> ranger::ranger(
-            data = Xy,
+    R"Xy <- data.frame(cbind(X, y))"
+    start = time()
+    R"""rrf <- ranger::ranger(data = Xy,
             dependent.variable.name = "y",
             num.trees = $(config.ntrees),
             mtry = $(calc_mtry[config.mtry](size(X, 2))),
             max.depth = $(something(config.maxdepth, 0)),
             probability = TRUE,
             replace = TRUE,
-            classification = TRUE)$predictions[,2]
-    """ |> rcopy
-    Dict(:vals => R"rrf$predictions[,2]" |> rcopy,
-         :treesizes => R"sapply(1:rrf$num.trees, function(n) {dim(treeInfo(rrf, tree=n))[1]})" |> rcopy,
-         :gini_imp => R"rrf$variable.importance" |> rcopy)
+            importance = "impurity",
+            classification = TRUE)
+    """
+    trainstop = time()
+    R"predict(rrf, Xy)"
+    predict_elapsed = time() - trainstop
+    train_elapsed = time() - start
+    # now without probability due to a bug triggered in line
+    # https://github.com/imbs-hl/ranger/blob/master/R/treeInfo.R#L133
+    R"""rrf2 <- ranger::ranger(data = Xy,
+            dependent.variable.name = "y",
+            num.trees = $(config.ntrees),
+            mtry = $(calc_mtry[config.mtry](size(X, 2))),
+            max.depth = $(something(config.maxdepth, 0)),
+            probability = FALSE,
+            replace = TRUE,
+            importance = "impurity",
+            classification = TRUE)
+    """
+    Dict(:vals => R"""rrf$predictions[,"1"]""" |> rcopy,
+         :treesizes => R"sapply(1:rrf2$num.trees, function(n) {dim(treeInfo(rrf2, tree=n))[1]})" |> rcopy,
+         :treedepths => R"sapply(1:rrf2$num.trees, function(n) {rangertreegetmaxdepth(treeInfo(rrf2, tree=n), 1)})" |> rcopy,
+         :gini_imp => R"rrf$variable.importance / sum(rrf$variable.importance)" |> rcopy,
+         :traintime => train_elapsed,
+         :predtime => predict_elapsed) |>
+             d -> filter(((k, v)::Pair) -> !isnothing(v), d,)
 end
 
 push!(forest_backends, :ranger)
