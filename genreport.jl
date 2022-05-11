@@ -168,8 +168,52 @@ function generate_report(name::String, data::DataFrame, depvar::Symbol,
             Plotter.(plot(scalar_densities,
                           y=metric, x=:backend, color=:backend,
                           Geom.boxplot,
-                          Coord.cartesian(ymin=0, ymax=1))
+                          Coord.cartesian(ymin=0, ymax=1),
+                          Theme(key_position=:none))
                      for metric in last.(scalar_metrics))))
+        # Forest properties
+        treesize_values = DataFrame(backend = Symbol[], size = Int[])
+        treedepth_values = DataFrame(backend = Symbol[], depth = Int[])
+        gini_importances = DataFrame(backend = Symbol[], variable = Int[], importance=Float64[])
+        for backend in keys(results.predicted) |> collect |> sort
+            for i in 1:length(results.predicted[backend])
+                for val in get(results.predicted[backend][i], :treesizes, [-100])
+                    push!(treesize_values, [backend, val])
+                end
+                for val in get(results.predicted[backend][i], :treedepths, [-100])
+                    push!(treedepth_values, [backend, val])
+                end
+            end
+            gini_imps = get.(results.predicted[backend], :gini_imp, nothing)
+            if !all(isnothing, gini_imps)
+                gini_imp_mean = mean(hcat(gini_imps...), dims=2)
+                for (i, val) in enumerate(gini_imp_mean)
+                    push!(gini_importances, [backend, i, val])
+                end
+            else
+                push!(gini_importances, [backend, -100, -100])
+            end
+        end
+        push!(report, org"Properties of the random forest"p)
+        push!(report, PlotGrid([
+            Plotter(plot(treesize_values,
+                         x=:size, color=:backend,
+                         Geom.density,
+                         Coord.cartesian(xmin=0),
+                         Theme(key_position=:none))),
+            Plotter(plot(treedepth_values,
+                         x=:depth, color=:backend,
+                         Geom.density,
+                         Coord.cartesian(xmin=0),
+                         Theme(key_position=:none))),
+            Plotter(plot(gini_importances,
+                         x=:variable, y=:importance, color=:backend,
+                         Geom.bar(position=:dodge), Theme(bar_spacing=8pt),
+                         Guide.xticks(ticks=[1:maximum(gini_importances.variable);]),
+                         Coord.cartesian(xmin=0),
+                         Theme(key_position=:none)))
+        ]))
+        # Raw values table
         push!(report, Org.Keyword("latex", "\\newpage"))
         for (label, prop) in scalar_metrics
             push!(report, Org.AffiliatedKeywordsWrapper(
