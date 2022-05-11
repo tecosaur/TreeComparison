@@ -236,3 +236,50 @@ function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Va
 end
 
 push!(forest_backends, :ranger)
+
+# ---------------------
+# DecisionTree.jl
+# ---------------------
+
+using DecisionTree
+
+function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Val{Symbol("DecisionTree.jl")})
+    forest = RandomForestClassifier(n_trees=config.ntrees,
+                                    max_depth=something(config.maxdepth, -1),
+                                    n_subfeatures=calc_mtry[config.mtry](size(X, 2)))
+    start = time()
+    DecisionTree.fit!(forest, X, y)
+    train_elapsed = start - time()
+
+    nodecount(::Leaf) = 1
+    nodecount(node::Node) =
+        nodecount(node.left) + nodecount(node.right)
+
+    predictions = zeros(Float64, size(X, 1))
+    predictions_seen = zeros(Int, size(X, 1))
+
+    predict_time = 0.0
+    for i in 1:config.ntrees
+        dtree = DecisionTreeClassifier(max_depth=something(config.maxdepth, -1),
+                                       n_subfeatures=calc_mtry[config.mtry](size(X, 2)))
+        train, test = bootstrapsample(axes(X, 1))
+        DecisionTree.fit!(dtree, X[train, :], y[train])
+        start = time()
+        preds = predict_proba(dtree, X[test, :])
+        predict_time += time() - start
+        if size(preds, 2) == 1
+            predictions[test] .+= y[train[1]]
+        else
+            predictions[test] += preds[:, 2]
+        end
+        predictions_seen[test] .+= 1
+    end
+
+    Dict(:vals => predictions ./ predictions_seen,
+         :treedepths => depth.(forest.ensemble.trees),
+         :treesizes => nodecount.(forest.ensemble.trees),
+         :traintime => train_elapsed,
+         :predtime => predict_time)
+end
+
+push!(forest_backends, Symbol("DecisionTree.jl"))
