@@ -100,7 +100,7 @@ Base.convert(::Type{OrgDoc}, r::Report) =
 
 exportcmd(path::String, exporter::String) =
     `emacs --batch --eval
-"(progn (load \"~/.emacs.d/init.el\") (require 'org) (require 'ox-latex) (setq org-latex-default-figure-position \"!htbp\"))"
+"(progn (when (file-exists-p \"~/.emacs.d/init.el\") (load \"~/.emacs.d/init.el\")) (require 'org) (require 'ox-latex) (setq org-latex-default-figure-position \"!htbp\"))"
 $path
 -f "$exporter"`
 
