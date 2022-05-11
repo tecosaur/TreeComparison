@@ -19,6 +19,14 @@ function generate_report(name::String, data::DataFrame, depvar::Symbol,
                       Org.TextPlain("\$2"),
                       Org.ExportSnippet("latex", "}"),
                       Org.ExportSnippet("html", "</span>")]))),
+              Org.Keyword("macro" =>
+                  "colorbox " *
+                  string(Org.Paragraph([
+                      Org.ExportSnippet("latex", "\\colorbox[HTML]{\$1}{\\sffamily\\bfseries "),
+                      Org.ExportSnippet("html", "<span style=\"background-color: #\$1; font-family: sans; font-weight: bold\">"),
+                      Org.TextPlain("\$2"),
+                      Org.ExportSnippet("latex", "}"),
+                      Org.ExportSnippet("html", "</span>")]))),
               parse(Org.Paragraph,
                 string("The $name ",
                        join(size(data), "\\times"),
@@ -98,13 +106,53 @@ function generate_report(name::String, data::DataFrame, depvar::Symbol,
                 ["caption" => "Median metrics for each implementation.",
                  "attr_latex" => ":align l|" * 'l'^length(backends) * "|l"]))
         push!(report, treeres)
+        # Runtime info
+        traintimes = Dict(
+            backend => median(filter(!isnothing,
+                              get.(results.predicted[backend], :traintime, nothing))) |> abs
+            for backend in backends)
+        predtimes = Dict(
+            backend => median(filter(!isnothing,
+                              get.(results.predicted[backend], :predtime, nothing))) |> abs
+            for backend in backends)
+        function perftimes(runtimes)
+            vcat([[Org.Macro("colorbox",
+                             [hex(colour), replace(backend, "_" => "\\under{}") * "@@latex:\\vphantom{lp}@@"]),
+                   Org.Entity("ensp"), Org.TextPlain(" "),
+                   Org.Macro("color",
+                             [hex(colour), string("​*", round(runtimes[Symbol(backend)], digits=2), "s*​")]),
+                   Org.Entity("emsp"), Org.TextPlain(" ")]
+                  for (colour, backend) in
+                      zip(Scale.color_discrete_hue().f(length(backends)),
+                          sort(string.(backends)))]...)[1:end-2]
+        end
+        # Legend
+        push!(report, Org.Keyword("latex", "\\vspace{-2.2ex}"))
+        push!(report, Org.SpecialBlock(
+            "center",
+            [Org.Keyword("latex" => "\\scriptsize"),
+             Org.Paragraph(vcat(
+                 Org.ExportSnippet("latex", "\\textsc{\\phantom{pr}"),
+                 Org.TextPlain("train"),
+                 Org.ExportSnippet("latex", "}"),
+                 Org.Entity("emsp"),
+                 perftimes(traintimes)...,
+                 Org.LineBreak(),
+                 Org.ExportSnippet("latex", "\\textsc{"),
+                 Org.TextPlain("predict"),
+                 Org.ExportSnippet("latex", "}"),
+                 Org.Entity("emsp"),
+                 perftimes(predtimes)...))]))
+        push!(report, Org.Keyword("latex", "\\vspace{-3ex}"))
         # Curves
         push!(report, org"Precision-recall and ROC curves."p)
         push!(report,
               PlotGrid([Plotter(curve_plot(results, :recall, :precision,
-                                           Coord.cartesian(xmin=0, xmax=1, ymin=0, ymax=1))),
+                                           Coord.cartesian(xmin=0, xmax=1, ymin=0, ymax=1),
+                                           Theme(key_position=:none))),
                         Plotter(curve_plot(results, :αs, :πs,
-                                           Coord.cartesian(xmin=0, xmax=1, ymin=0, ymax=1)))]))
+                                           Coord.cartesian(xmin=0, xmax=1, ymin=0, ymax=1),
+                                           Theme(key_position=:none)))]))
         # Density
         scalar_densities = DataFrame(backend=Symbol[], ;NamedTuple(zip(last.(scalar_metrics), fill(Float64[], length(scalar_metrics))))...)
         for backend in keys(results.metrics) |> collect |> sort

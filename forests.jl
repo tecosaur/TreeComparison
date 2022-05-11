@@ -41,7 +41,7 @@ end
 
 function forest_preds(data::DataFrame, depvar::Symbol, config::ForestConfig{Int}, backends::Vector{Symbol})
     X = Matrix(select(data, Not(depvar)))
-    y = Int.(data[!, depvar] .== mode(data[!, depvar]))
+    y = Vector{Int}(data[!, depvar] .== mode(data[!, depvar]))
     ForestResults(y,
                   Dict(b => forest_preds(X, y, config, b) for b in backends),
                   Dict(b => [Dict{Symbol, Any}() for _ in 1:config.replicates] for b in backends))
@@ -73,15 +73,21 @@ function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Va
                   else pybuiltins.None end,
                   oob_score=true)
     forest = skrandomforrest(config.ntrees; skl_params...)
+    start = time()
     forest.fit(X, y)
-    predvals = pyconvert(Matrix, forest.oob_decision_function_)[:, 2],
+    train_elapsed = time() - start
+    forest.predict_proba(X)
+    predict_elapsed = time() - train_elapsed
+    predvals = pyconvert(Matrix, forest.oob_decision_function_)[:, 2]
     treedepths = pyconvert.(Int, [dt.tree_.max_depth for dt in forest.estimators_])
     treesizes = pyconvert.(Int, [dt.tree_.node_count for dt in forest.estimators_])
     gini_imp = pyconvert(Vector, forest.feature_importances_)
     Dict(:vals => predvals,
          :treedepths => treedepths,
          :treesizes => treesizes,
-         :gini_imp => gini_imp)
+         :gini_imp => gini_imp,
+         :traintime => train_elapsed,
+         :predtime => predict_elapsed)
 end
 
 push!(forest_backends, :sklearn)
@@ -111,11 +117,17 @@ function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Va
     gini_imps = Matrix{Float64}(undef, size(X, 2), config.ntrees)
     predictions = zeros(Float64, size(X, 1))
     predictions_seen = zeros(Int, size(X, 1))
+    train_elapsed = 0.0
+    predict_elapsed = 0.0
     for i in 1:config.ntrees
         dtree = skdecisiontree(; skl_params...)
         train, test = bootstrapsample(axes(X, 1))
+        start = time()
         dtree.fit(X[train, :], y[train])
+        trainstop = time()
         preds = pyconvert(Matrix, dtree.predict_proba(X[test, :]))
+        predict_elapsed += time() - trainstop
+        train_elapsed += trainstop - start
         if size(preds, 2) == 1
             predictions[test] .+= y[train[1]]
         else
@@ -129,7 +141,9 @@ function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Va
     Dict(:vals => predictions ./ predictions_seen,
          :treedepths => treedepths,
          :treesizes => treesizes,
-         :gini_imp => mean(gini_imps, dims=2))
+         :gini_imp => mean(gini_imps, dims=2),
+         :traintime => train_elapsed,
+         :predtime => predict_elapsed)
 end
 
 push!(forest_backends, :call_sklearn)
@@ -142,15 +156,23 @@ R"library(randomForest)"
 
 function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Val{:randomForest})
     @rput X y
+    start = time()
     R"""rf <- randomForest(
             X, factor(y),
             ntree = $(config.ntrees),
             mtry = $(calc_mtry[config.mtry](size(X, 2))),
-            maxnodes = $(if !isnothing(config.maxdepth) 1+config.maxdepth else R"NULL" end)
+            maxnodes = $(if !isnothing(config.maxdepth) 1+config.maxdepth else R"NULL" end),
+            localImp = TRUE
         )"""
+    trainstop = time()
+    R"predict(rf, X)"
+    predict_elapsed = time() - trainstop
+    train_elapsed = trainstop - start
     Dict(:vals => R"rf$votes[,2]" |> rcopy,
          :treesizes => R"treesize(rf)" |> rcopy,
-         :gini_imp => R"rf$importance[,1]" |> rcopy)
+         :gini_imp => R"rf$importance[,1] / sum(rf$importance[,1])" |> rcopy,
+         :traintime => train_elapsed,
+         :predtime => predict_elapsed)
 end
 
 push!(forest_backends, :randomForest)
