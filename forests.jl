@@ -75,9 +75,10 @@ function forest_preds(X::Matrix, y::Vector{Int}, config::ForestConfig{Int}, ::Va
     forest = skrandomforrest(config.ntrees; skl_params...)
     start = time()
     forest.fit(X, y)
-    train_elapsed = time() - start
+    train_stop = time()
     forest.predict_proba(X)
-    predict_elapsed = time() - train_elapsed
+    predict_elapsed = time() - train_stop
+    train_elapsed = train_stop - start
     predvals = pyconvert(Matrix, forest.oob_decision_function_)[:, 2]
     treedepths = pyconvert.(Int, [dt.tree_.max_depth for dt in forest.estimators_])
     treesizes = pyconvert.(Int, [dt.tree_.node_count for dt in forest.estimators_])
